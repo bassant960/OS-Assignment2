@@ -2,6 +2,9 @@ import java.util.Queue;
 import java.util.LinkedList;
 import java.util.Scanner;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 class Semaphore {
     private int value;
@@ -98,64 +101,90 @@ class Pump extends Thread {
     }
 }
 
+
 class Car implements Runnable {
     private final String carName;
-    private final Queue<String> waitingQueue; // The shared resource (Bounded Buffer)
-    private final Semaphore empty; // Represents available slots (Car checks this)
-    private final Semaphore full;  // Represents occupied slots (Car increments this)
-    private final Semaphore mutex; // The lock for the critical section
+    private final Queue<String> waitingQueue;
+    private final Semaphore empty;
+    private final Semaphore full;
+    private final Semaphore mutex;
+    private final Semaphore pumps;
     private static int carsArrived = 0;
     private static final Object arrivalLock = new Object();
 
-    public Car(String name, Queue<String> queue, Semaphore empty, Semaphore full, Semaphore mutex) {
+    /**
+     * Constructor for the Car (Producer) thread.
+     * @param name The name/ID of the car.
+     * @param queue The shared waiting queue.
+     * @param empty The 'empty' semaphore.
+     * @param full The 'full' semaphore.
+     * @param mutex The 'mutex' semaphore (lock).
+     * @param pumps The 'pumps' semaphore to check if all pumps are busy.
+     */
+    public Car(String name, Queue<String> queue, Semaphore empty, Semaphore full, Semaphore mutex, Semaphore pumps) {
         this.carName = name;
         this.waitingQueue = queue;
         this.empty = empty;
         this.full = full;
         this.mutex = mutex;
+        this.pumps = pumps;
+    }
+
+    /**
+     * Simulates a random arrival time delay.
+     */
+    private void simulateArrival() {
+        try {
+            // Simulate random delay before entering the queue
+            long sleepTime = ThreadLocalRandom.current().nextInt(100, 300);
+            Thread.sleep(sleepTime);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Override
     public void run() {
-        // Show arrival immediately
-        synchronized (System.out) {
-            System.out.println(carName + " arrived");
-        }
+        // Print arrival immediately
+        System.out.println(carName + " arrived");
 
-        // Simulate arrival timing
-        try {
-            Thread.sleep(ThreadLocalRandom.current().nextInt(100, 300));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        simulateArrival(); // Simulate arrival delay
 
         try {
-            empty.waiting();
-
-            mutex.waiting();
-            try {
-                // Count how many cars have arrived so far
-                synchronized (arrivalLock) {
-                    carsArrived++;
-                }
-
-                boolean shouldShowWaiting = carsArrived >= 4;
-                waitingQueue.add(carName);
-
-                if (shouldShowWaiting) {
-                    synchronized (System.out) {
-                        System.out.println(carName + " arrived and waiting");
-                    }
-                }
-            } finally {
-                mutex.signal();
+            // Count cars arrived
+            synchronized (arrivalLock) {
+                carsArrived++;
             }
 
-            full.signal();
+            // Check if all pumps are busy (pumps semaphore is 0)
+            boolean allPumpsBusy = pumps.get() == 0;
+
+            // 1. Wait until a space is available in the waiting area
+            empty.waiting();
+
+            // 2. Acquire the lock for exclusive access to the critical section
+            mutex.waiting();
+
+            // --- Critical Section: Adding the item to the buffer ---
+            waitingQueue.add(carName);
+
+            // Print "arrived and waiting" if all pumps are busy AND we've reached the pump capacity
+            if (allPumpsBusy ) {
+                System.out.println(carName + " arrived and waiting");
+            }
+            // --------------------------------------------------------
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            System.err.println(carName + " was interrupted while waiting.");
+            return;
+        } finally {
+            // 3. Release the mutual exclusion lock
+            mutex.signal();
         }
+
+        // 4. Signal that a new item (car) is available in the queue
+        full.signal();
     }
 }
 
@@ -166,6 +195,7 @@ public class ServiceStation {
     private final Semaphore full;
     private final Semaphore pumps;
     private final Pump[] pumpThreads;
+    private final int numberOfPumps;
 
     public ServiceStation(int waitingAreaSize, int numberOfPumps) {
         waitingQueue = new LinkedList<>();
@@ -173,6 +203,7 @@ public class ServiceStation {
         empty = new Semaphore(waitingAreaSize);
         full = new Semaphore(0);
         pumps = new Semaphore(numberOfPumps);
+        this.numberOfPumps = numberOfPumps;
 
         pumpThreads = new Pump[numberOfPumps];
         for (int i = 0; i < numberOfPumps; i++) {
@@ -187,7 +218,7 @@ public class ServiceStation {
     }
 
     public void addCar(String carName) {
-        new Thread(new Car(carName, waitingQueue, empty, full, mutex)).start();
+        new Thread(new Car(carName, waitingQueue, empty, full, mutex, pumps)).start();
     }
 
     public void shutdown() {
@@ -214,29 +245,33 @@ public class ServiceStation {
         String input = sc.nextLine().trim();
         String[] cars = input.split(",");
 
-        //Add all cars first
-        for (String car : cars) {
-            station.addCar(car.trim());
-            try {
-                Thread.sleep(500); // Delay between arrivals
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        // Start pumps FIRST before adding any cars
+        station.startPumps();
+
+        // Add all cars with proper timing
+        for (int i = 0; i < cars.length; i++) {
+            station.addCar(cars[i].trim());
+
+            // Add strategic delays to ensure proper pump assignment
+            if (i < numberOfPumps) {
+                try {
+                    Thread.sleep(200); 
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            } else {
+                try {
+                    Thread.sleep(500); // Normal delay for subsequent cars
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
-        // Wait for all arrivals to complete
+        // Wait for all processing to complete - calculate based on number of cars
+        int processingTime = Math.max(3000, cars.length * 200);
         try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
-        // Start pumps AFTER all arrivals are shown
-        station.startPumps();
-
-        // Wait for all processing to complete
-        try {
-            Thread.sleep(3000);
+            Thread.sleep(processingTime);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
