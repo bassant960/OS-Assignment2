@@ -255,7 +255,7 @@ public class ServiceStation {
             // Add strategic delays to ensure proper pump assignment
             if (i < numberOfPumps) {
                 try {
-                    Thread.sleep(200); 
+                    Thread.sleep(170);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -269,7 +269,7 @@ public class ServiceStation {
         }
 
         // Wait for all processing to complete - calculate based on number of cars
-        int processingTime = Math.max(3000, cars.length * 200);
+        int processingTime = Math.max(3000, cars.length * 600);
         try {
             Thread.sleep(processingTime);
         } catch (InterruptedException e) {
