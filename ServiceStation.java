@@ -178,13 +178,13 @@ class Validator {
 
     public synchronized void checkQueueLimit(int queueSize) {
         if (queueSize > waitingCapacity) {
-            Logger.log("⚠️ Validator: Queue exceeded capacity (" + queueSize + "/" + waitingCapacity + ")");
+            Logger.log("Validator: Queue exceeded capacity (" + queueSize + "/" + waitingCapacity + ")");
         }
     }
 
     public synchronized void checkActivePumps(int activeCount) {
         if (activeCount > totalPumps) {
-            Logger.log("⚠️ Validator: Active pumps exceed total limit (" + activeCount + "/" + totalPumps + ")");
+            Logger.log("Validator: Active pumps exceed total limit (" + activeCount + "/" + totalPumps + ")");
         }
     }
     public synchronized void checkCarService(String carName) {
@@ -485,5 +485,6 @@ public class ServiceStation {
 
     
 }
+
 
 }
